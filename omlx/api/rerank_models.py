@@ -38,9 +38,9 @@ class RerankRequest(BaseModel):
 
     instruction: str | None = None
     """
-    Task instruction for instruction-aware rerankers. Qwen3-Reranker renders
-    it into the `<Instruct>:` slot of its native prompt format.
-    If not specified, the model's default instruction is used.
+    Task instruction for Qwen3-Reranker and Qwen3-VL-Reranker, rendered into
+    the `<Instruct>:` slot. If not specified or empty, the default instruction
+    is used. Other rerankers ignore it.
     """
 
     top_n: int | None = None

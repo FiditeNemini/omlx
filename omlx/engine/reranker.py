@@ -118,6 +118,7 @@ class RerankerEngine(BaseNonStreamingEngine):
             max_length: Maximum token length for each query-document pair.
                 If None, uses model-appropriate default (the tokenizer limit
                 for encoders, 8192 for CausalLM).
+            instruction: Task instruction for Qwen3 rerankers (None = default).
 
         Returns:
             RerankOutput with scores, sorted indices, and token count

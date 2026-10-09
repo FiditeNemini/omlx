@@ -283,13 +283,14 @@ class MLXRerankerModel:
         query: "str | dict[str, Any]",
         documents: "list[str] | list[dict[str, Any]]",
         max_length: int,
+        instruction: str | None = None,
     ) -> RerankOutput:
         """Rerank using mlx-embeddings' multimodal model.process() API."""
         query_item = self._build_vl_item(query)
         doc_items = [self._build_vl_item(d) for d in documents]
 
         inputs = {
-            "instruction": self._CAUSAL_LM_DEFAULT_INSTRUCTION,
+            "instruction": instruction or self._CAUSAL_LM_DEFAULT_INSTRUCTION,
             "query": query_item,
             "documents": doc_items,
         }
@@ -979,6 +980,8 @@ class MLXRerankerModel:
                 If None, uses model-appropriate default (the tokenizer limit
                 for encoders, 8192 for CausalLM). Encoder values are capped
                 at the tokenizer limit.
+            instruction: Task instruction for the Qwen3 reranker `<Instruct>:`
+                slot. None or empty uses the default. Other rerankers ignore it.
 
         Returns:
             RerankOutput with scores, sorted indices, and token count
@@ -995,7 +998,9 @@ class MLXRerankerModel:
                 if max_length is not None
                 else self._DEFAULT_MAX_LENGTH_CAUSAL_LM
             )
-            return self._rerank_vl(query, documents, effective_max_length)
+            return self._rerank_vl(
+                query, documents, effective_max_length, instruction=instruction
+            )
 
         # Text-only paths: coerce dict inputs down to text so existing
         # _rerank_* methods keep their str-only contract.
@@ -1057,9 +1062,6 @@ class MLXRerankerModel:
         if not callable(self.model):
             raise ValueError("CausalLM reranker model is not initialized.")
 
-        # A caller-supplied instruction replaces the default in the <Instruct>
-        # slot. An empty string falls back to the default: the slot is part of
-        # the model's native prompt format and is not meaningful left blank.
         effective_instruction = instruction or self._CAUSAL_LM_DEFAULT_INSTRUCTION
 
         # Compute max tokens available for the instruction content
