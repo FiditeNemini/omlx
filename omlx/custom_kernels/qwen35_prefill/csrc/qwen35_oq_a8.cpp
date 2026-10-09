@@ -119,8 +119,10 @@ bool oq_a8_packed_shape_matches(int packed_dim, int K, int bits) {
 
 std::atomic<bool> oq_nax_runtime_ok{true};
 
-// Native-metadata Q8 kernel: up to this many rows use the (2,2) tile.
-constexpr int kNativeMetaWideTileMaxRows = 1024;
+// Q8 uses the (2,2) tile up to this many rows and (1,2) above.
+constexpr int kQ8WideTileMaxRows = 1024;
+// Both Q8 tiles are this many weight rows wide.
+constexpr int kQ8TileN = 64;
 
 // ---------------------------------------------------------------------------
 // Stage A
@@ -218,14 +220,12 @@ class Qwen35OqA8QmmTPrimitive : public Primitive {
       int bits,
       int act_mode,
       int variant,
-      bool packed,
-      bool native_meta)
+      bool packed)
       : Primitive(stream),
         bits_(bits),
         act_mode_(act_mode),
         variant_(variant),
-        packed_(packed),
-        native_meta_(native_meta) {
+        packed_(packed) {
     if (!oq_a8_bits_supported(bits_)) {
       std::ostringstream msg;
       msg << "Unsupported oQ A8 bits " << bits_ << " (expected 4, 5 or 8).";
@@ -264,19 +264,15 @@ class Qwen35OqA8QmmTPrimitive : public Primitive {
     const int N = weight.shape(0);
     const int M = qa.size() / K;
 
-    auto cfg = oq_a8_nax_variant(variant_);
     std::string kname;
-    if (bits_ == 8 && native_meta_) {
-      // Swapped-orientation kernel over [N, K/64] metadata. Both tiles are
-      // BN = 64 weight rows; the wider token tile wins up to 1024 rows.
-      cfg = M <= kNativeMetaWideTileMaxRows ? OqA8NaxVariant{64, 64, 2, 2}
-                                            : OqA8NaxVariant{32, 64, 1, 2};
-      concatenate(kname, "oq_q8_a8_qmm_t_nax_nm_am", act_mode_, "_",
-                  oq_type_name(out.dtype()), "_wm_", cfg.wm, "_wn_", cfg.wn);
-    } else if (bits_ == 8) {
+    OqA8NaxVariant cfg;
+    if (bits_ == 8) {
+      cfg = M <= kQ8WideTileMaxRows ? OqA8NaxVariant{64, kQ8TileN, 2, 2}
+                                    : OqA8NaxVariant{32, kQ8TileN, 1, 2};
       concatenate(kname, "oq_q8_a8_qmm_t_nax_am", act_mode_, "_",
                   oq_type_name(out.dtype()), "_wm_", cfg.wm, "_wn_", cfg.wn);
     } else {
+      cfg = oq_a8_nax_variant(variant_);
       concatenate(kname, "oq_a8_qmm_t_nax_v8_q", bits_, "_am", act_mode_,
                   "_", oq_type_name(out.dtype()), "_wm_", cfg.wm, "_wn_",
                   cfg.wn, packed_ ? "_packed" : "");
@@ -314,11 +310,10 @@ class Qwen35OqA8QmmTPrimitive : public Primitive {
   bool is_equivalent(const Primitive& other) const override {
     const auto& rhs = static_cast<const Qwen35OqA8QmmTPrimitive&>(other);
     return bits_ == rhs.bits_ && act_mode_ == rhs.act_mode_ &&
-        variant_ == rhs.variant_ && packed_ == rhs.packed_ &&
-        native_meta_ == rhs.native_meta_;
+        variant_ == rhs.variant_ && packed_ == rhs.packed_;
   }
   auto state() const {
-    return std::make_tuple(bits_, act_mode_, variant_, packed_, native_meta_);
+    return std::make_tuple(bits_, act_mode_, variant_, packed_);
   }
 
  private:
@@ -326,7 +321,6 @@ class Qwen35OqA8QmmTPrimitive : public Primitive {
   int act_mode_;
   int variant_;
   bool packed_;
-  bool native_meta_;
 };
 
 // ---------------------------------------------------------------------------
@@ -462,18 +456,12 @@ array qwen35_oq_a8_qmm_t(
     int act_mode,
     int variant,
     bool packed,
-    bool native_meta,
     StreamOrDevice s) {
   if (!oq_a8_bits_supported(bits)) {
     std::ostringstream msg;
     msg << "[omlx_qwen35_prefill.qwen35_oq_a8_qmm_t] bits " << bits
         << " unsupported (expected 4, 5 or 8).";
     throw std::invalid_argument(msg.str());
-  }
-  if (native_meta && (bits != 8 || packed || variant != 806)) {
-    throw std::invalid_argument(
-        "[omlx_qwen35_prefill.qwen35_oq_a8_qmm_t] native metadata is a Q8 "
-        "row-major layout and needs variant 806.");
   }
   if (bits == 8 && packed) {
     throw std::invalid_argument(
@@ -535,9 +523,9 @@ array qwen35_oq_a8_qmm_t(
         << " bits.";
     throw std::invalid_argument(msg.str());
   }
-  // Metadata is group-major: scales/biases [K/64, N], Ra [K/64, M] (native
-  // metadata keeps the checkpoint's [N, K/64] for scales/biases). Packed
-  // metadata holds the same N * K/64 values in the PackedLinear tile order.
+  // Ra is [K/64, M].
+  // Q4/Q5 scales/biases are [K/64, N]; Q8 reads the checkpoint's [N, K/64].
+  // Packed metadata holds the same N * K/64 values in the PackedLinear order.
   (void)oq_a8_nax_variant(variant);
   if (packed) {
     if (bits != 4 || out_dtype != bfloat16 || N % kPackedTileN != 0 ||
@@ -553,8 +541,8 @@ array qwen35_oq_a8_qmm_t(
   const size_t sc_size = static_cast<size_t>(N) * static_cast<size_t>(groups);
   const bool sc_ok = packed
       ? scales.size() == sc_size && biases.size() == sc_size
-      : (native_meta ? scales.shape(0) == N && scales.shape(1) == groups
-                     : scales.shape(0) == groups && scales.shape(1) == N) &&
+      : (bits == 8 ? scales.shape(0) == N && scales.shape(1) == groups
+                   : scales.shape(0) == groups && scales.shape(1) == N) &&
           biases.shape() == scales.shape();
   if (!sc_ok) {
     std::ostringstream msg;
@@ -578,11 +566,11 @@ array qwen35_oq_a8_qmm_t(
 
   // N must tile exactly so the weight decoder can stay bounds-check free; M
   // is the token count and is handled with masked loads and stores.
-  const auto cfg = oq_a8_nax_variant(variant);
-  if (N % cfg.bn != 0) {
+  const int tile_bn = bits == 8 ? kQ8TileN : oq_a8_nax_variant(variant).bn;
+  if (N % tile_bn != 0) {
     std::ostringstream msg;
     msg << "[omlx_qwen35_prefill.qwen35_oq_a8_qmm_t] N=" << N
-        << " is not a multiple of the tile BN=" << cfg.bn << ".";
+        << " is not a multiple of the tile BN=" << tile_bn << ".";
     throw std::invalid_argument(msg.str());
   }
 
@@ -603,7 +591,7 @@ array qwen35_oq_a8_qmm_t(
       std::move(out_shape),
       out_dtype,
       std::make_shared<Qwen35OqA8QmmTPrimitive>(
-          stream, bits, act_mode, variant, packed, native_meta),
+          stream, bits, act_mode, variant, packed),
       {qa, sa, ra, weight, scales, biases});
 }
 

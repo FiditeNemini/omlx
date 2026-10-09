@@ -114,11 +114,11 @@ std::vector<mx::array> qwen35_oq_a8_quantize(
 
 // INT8 x INT8 -> INT32 GEMM against packed affine Q4/Q5/Q8 weights, with the
 // affine correction applied at every GS64 boundary. Output dtype follows
-// `scales`. `packed` reads Q4 weights and metadata in the PackedLinear tile
-// layout instead of row-major weights and [K/64, N] metadata. Q4/Q5 read Qa in
-// Stage A v8's permuted K order; Q8 reads it in checkpoint order.
-// `native_meta` (Q8, variant 806 only) reads scales/biases in the checkpoint
-// layout [N, K/64], so no group-major copy has to exist.
+// `scales`. Q4/Q5 read [K/64, N] metadata, or with `packed` Q4 weights and
+// metadata in the PackedLinear tile layout. Q8 reads scales/biases in the
+// checkpoint layout [N, K/64]. Q4/Q5 read Qa in Stage A v8's permuted K order;
+// Q8 reads it in checkpoint order. `variant` selects the Q4/Q5 tile; Q8 picks
+// its tile from the row count.
 mx::array qwen35_oq_a8_qmm_t(
     const mx::array& qa,
     const mx::array& sa,
@@ -130,7 +130,6 @@ mx::array qwen35_oq_a8_qmm_t(
     int act_mode = 0,
     int variant = 800,
     bool packed = false,
-    bool native_meta = false,
     mx::StreamOrDevice s = {});
 
 // Test helper: unpack Q4/Q5/Q8 codes to INT8 [N, group_count * 64] (Q8 is
