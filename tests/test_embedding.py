@@ -3,12 +3,14 @@
 
 import asyncio
 import base64
+import io
 import json
 import math
 import numpy as np
 import struct
 import threading
 import time
+import wave
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -39,11 +41,9 @@ from omlx.exceptions import InvalidRequestError
 from omlx.model_discovery import detect_model_type
 from omlx.models.embedding import EmbeddingOutput, MLXEmbeddingModel
 
+
 def _wav_data_uri(seconds: float = 0.25, sample_rate: int = 16000) -> str:
     """Base64 data URI of a mono 16-bit sine WAV."""
-    import io
-    import wave
-
     t = np.arange(int(seconds * sample_rate)) / sample_rate
     pcm = (0.3 * np.sin(2 * np.pi * 440 * t) * 32767).astype("<i2").tobytes()
     buffer = io.BytesIO()

@@ -110,9 +110,10 @@ async def test_embedding_audio_setting_is_load_time():
 
 
 @pytest.mark.asyncio
-async def test_embedding_audio_length_setting_is_load_time():
+@pytest.mark.parametrize("audio_enabled", [True, False])
+async def test_embedding_audio_length_is_load_time_only_with_audio(audio_enabled):
     pool, entry = _failed_pool()
-    settings = ModelSettings()
+    settings = ModelSettings(embedding_audio_enabled=audio_enabled)
 
     await _update_settings(
         pool,
@@ -121,7 +122,26 @@ async def test_embedding_audio_length_setting_is_load_time():
     )
 
     assert settings.embedding_audio_max_seconds == 120
-    assert entry.load_failed is False
+    assert entry.load_failed is not audio_enabled
+
+
+@pytest.mark.asyncio
+async def test_resent_embedding_audio_settings_keep_loaded_engine():
+    pool, entry = _failed_pool()
+    entry.engine = _idle_engine()
+    entry.load_failed = False
+    pool._unload_engine = AsyncMock()
+
+    result = await _update_settings(
+        pool,
+        ModelSettings(embedding_audio_enabled=True, embedding_audio_max_seconds=120.0),
+        admin_routes.ModelSettingsRequest(
+            embedding_audio_enabled=True, embedding_audio_max_seconds=120.0
+        ),
+    )
+
+    assert result["requires_reload"] is False
+    pool._unload_engine.assert_not_awaited()
 
 
 def test_embedding_audio_length_must_be_positive():

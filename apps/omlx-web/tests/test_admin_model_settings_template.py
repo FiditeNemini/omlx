@@ -3,6 +3,7 @@
 import json
 import shutil
 import subprocess
+from html.parser import HTMLParser
 from pathlib import Path
 
 import pytest
@@ -331,6 +332,44 @@ def test_js_embedded_translations_escape_apostrophes():
 
     unsafe = re.findall(r"'\{\{ t\('[a-z_.0-9]+'\) \}\}'", _model_settings_template())
     assert unsafe == []
+
+
+class _GateFinder(HTMLParser):
+    """Collect the x-show gates of the elements around a marker comment."""
+
+    _VOID = {"input", "br", "img", "hr", "meta", "link", "source"}
+
+    def __init__(self, marker: str):
+        super().__init__()
+        self._marker = marker
+        self._stack: list[str] = []
+        self.gates: list[str] | None = None
+
+    def handle_starttag(self, tag, attrs):
+        if tag not in self._VOID:
+            self._stack.append(dict(attrs).get("x-show") or "")
+
+    def handle_endtag(self, tag):
+        if tag not in self._VOID:
+            self._stack.pop()
+
+    def handle_comment(self, data):
+        if self._marker in data:
+            self.gates = [gate for gate in self._stack if gate]
+
+
+def test_embedding_audio_toggle_is_outside_the_llm_only_list():
+    """The advanced list is hidden for embedding models, so the toggle sits after it."""
+    html = _model_settings_template()
+    finder = _GateFinder("Embedding audio input")
+    finder.feed(html)
+    assert finder.gates == []
+
+    section = _section(
+        html, "<!-- Embedding audio input (EmbeddingGemma 2) -->", "<!-- Actions -->"
+    )
+    assert 'x-show="selectedModel?.embedding_audio_supported"' in section
+    assert 'x-show="modelSettings.embedding_audio_enabled"' in section
 
 
 def test_oq_a8_toggle_is_gated_to_qwen35_models():

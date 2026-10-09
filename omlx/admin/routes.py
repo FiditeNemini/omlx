@@ -2201,6 +2201,7 @@ def _model_options(model_info: dict, settings) -> dict:
         "ane_prefill_default_fraction": ane_prefill_fraction(None, model_type),
         "ane_prefill_mlp_fractions": [1 / 3, 0.5] if ane_backend == "k2" else [],
         "ane_prefill_shared_fractions": [0, 1 / 3, 1] if ane_backend == "k2" else [],
+        "embedding_audio_supported": model_type == "embedding_gemma2",
     }
 
 
@@ -3355,9 +3356,6 @@ async def update_model_settings(
         # trust_remote_code is plumbed at model load time; toggling it on
         # an already-loaded engine has no effect until reload.
         or "trust_remote_code" in sent
-        # So are the embedding audio tower and its audio length.
-        or "embedding_audio_enabled" in sent
-        or "embedding_audio_max_seconds" in sent
     )
     auto_unloaded = False
     auto_reloaded = False

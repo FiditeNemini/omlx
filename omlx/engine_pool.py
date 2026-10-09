@@ -1053,12 +1053,12 @@ class EnginePool:
         # Security/load gates.
         add("trust_remote_code", bool(data.get("trust_remote_code", False)))
         add("index_cache_freq", normalized_index_cache_freq())
-        # Embedding audio tower residency is decided at load.
-        add(
-            "embedding_audio_enabled",
-            bool(data.get("embedding_audio_enabled", False)),
-        )
-        add("embedding_audio_max_seconds", data.get("embedding_audio_max_seconds"))
+        # Embedding audio tower residency is decided at load. The audio length
+        # only matters while the tower is loaded.
+        audio_active = bool(data.get("embedding_audio_enabled", False))
+        add("embedding_audio_enabled", audio_active)
+        if audio_active:
+            add("embedding_audio_max_seconds", data.get("embedding_audio_max_seconds"))
 
         # Load-time model variants. Dependent fields only matter when their
         # feature is active; stale draft paths or tuning defaults must not

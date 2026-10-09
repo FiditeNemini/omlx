@@ -302,6 +302,8 @@
                 qwen35_oq_a8_enabled: false,
                 qwen35_oq_a8_min_tokens: 128,
                 trust_remote_code: false,
+                embedding_audio_enabled: false,
+                embedding_audio_max_seconds: null,
             },
             savingModelSettings: false,
             settingsApply: { open: false, mode: 'optimal', phase: 'input', recipeText: '', result: null, candidates: null, error: '' },
@@ -2114,6 +2116,8 @@
                     ctKwargEntries,
                     is_diffusion_model: isDiffusion,
                     trust_remote_code: s.trust_remote_code || false,
+                    embedding_audio_enabled: s.embedding_audio_enabled || false,
+                    embedding_audio_max_seconds: s.embedding_audio_max_seconds ?? null,
                 };
             },
 
@@ -3238,6 +3242,14 @@
                                     vlm_mtp_enabled: false,
                                     vlm_mtp_draft_model: null,
                                     vlm_mtp_draft_block_size: null,
+                                });
+                            }
+                            if (this.selectedModel?.embedding_audio_supported) {
+                                const audioSeconds = Number(this.modelSettings.embedding_audio_max_seconds);
+                                Object.assign(payload, {
+                                    embedding_audio_enabled: !!this.modelSettings.embedding_audio_enabled,
+                                    // Empty keeps the 30 s processor default.
+                                    embedding_audio_max_seconds: audioSeconds > 0 ? audioSeconds : null,
                                 });
                             }
                             return payload;
