@@ -212,6 +212,7 @@ from .exceptions import (
     ModelUnavailableError,
     PrefillMemoryAbortedError,
     PrefillMemoryExceededError,
+    RequestAbortedError,
     SchedulerQueueFullError,
 )
 from .model_settings import forced_ct_keys, merge_chat_template_request_kwargs
@@ -1012,6 +1013,14 @@ async def invalid_request_error_handler(
     else:
         content = {"detail": str(exc)}
     return JSONResponse(status_code=400, content=content)
+
+
+@app.exception_handler(RequestAbortedError)
+async def request_aborted_handler(request: FastAPIRequest, exc: RequestAbortedError):
+    """Map a request aborted by a model unload to HTTP 409."""
+    return await http_exception_handler(
+        request, HTTPException(status_code=409, detail=str(exc))
+    )
 
 
 @app.exception_handler(SchedulerQueueFullError)
@@ -3039,6 +3048,10 @@ async def _with_json_keepalive(
         except PrefillMemoryExceededError as e:
             logger.warning(f"JSON keepalive prefill rejected: {e}")
             yield json.dumps(_prefill_memory_openai_error_body(e))
+            return
+        except RequestAbortedError as e:
+            logger.warning("JSON keepalive request aborted: %s", e)
+            yield json.dumps(_openai_error_body(str(e), 409))
             return
         except HTTPException as e:
             # Headers are already sent; preserve the API error in the body.
