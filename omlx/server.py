@@ -1630,7 +1630,7 @@ class _LLMEngineLease:
 
 async def _raise_if_llm_lease_abort_requested(lease: _LLMEngineLease) -> None:
     reason = lease.abort_reason()
-    if reason == "manual admin unload":
+    if reason in ("manual admin unload", "manual unload"):
         raise HTTPException(
             status_code=409,
             detail="Request aborted because this model is being unloaded.",
@@ -3704,10 +3704,7 @@ async def unload_model(model_id: str, _: bool = Depends(verify_api_key)):
     if entry.is_loading:
         raise HTTPException(status_code=409, detail=f"Model still loading: {model_id}")
 
-    # Same path as the admin route (#4378): an idle engine unloads now; an
-    # active one has its requests aborted first, so streaming clients get an
-    # error frame instead of a connection that never closes, and the
-    # teardown waits for the scheduler to drain.
+    # _unload_engine alone leaves active streams open; abort them first.
     unloaded = await _server_state.engine_pool.request_unload(
         model_id, reason="manual unload"
     )

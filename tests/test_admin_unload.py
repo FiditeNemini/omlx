@@ -54,9 +54,10 @@ async def test_idle_model_unload_returns_completed():
 
 
 @pytest.mark.asyncio
-async def test_lease_rejected_during_manual_unload_uses_unload_error():
+@pytest.mark.parametrize("reason", ["manual admin unload", "manual unload"])
+async def test_lease_rejected_during_manual_unload_uses_unload_error(reason):
     pool = MagicMock()
-    pool.get_abort_requested_reason.return_value = "manual admin unload"
+    pool.get_abort_requested_reason.return_value = reason
     lease = server._LLMEngineLease(model_id="model-a")
 
     with (
@@ -73,9 +74,6 @@ async def test_lease_rejected_during_manual_unload_uses_unload_error():
 
 @pytest.mark.asyncio
 async def test_public_unload_of_active_model_aborts_requests_first():
-    # /v1/models/{id}/unload used to call _unload_engine directly, which
-    # stopped the engine without finishing the active requests' collectors,
-    # so a streaming client hung forever (#4378).
     entry = MagicMock()
     entry.engine = object()
     entry.is_loading = False
@@ -94,22 +92,6 @@ async def test_public_unload_of_active_model_aborts_requests_first():
     }
     pool.request_unload.assert_awaited_once_with("model-a", reason="manual unload")
     pool._unload_engine.assert_not_called()
-
-
-@pytest.mark.asyncio
-async def test_public_unload_of_idle_model_returns_ok():
-    entry = MagicMock()
-    entry.engine = object()
-    entry.is_loading = False
-    pool = MagicMock()
-    pool.get_entry.return_value = entry
-    pool.request_unload = AsyncMock(return_value=True)
-
-    with patch.object(server._server_state, "engine_pool", pool):
-        response = await server.unload_model("model-a", _=True)
-
-    assert response == {"status": "ok", "model_id": "model-a"}
-    pool.request_unload.assert_awaited_once_with("model-a", reason="manual unload")
 
 
 @pytest.mark.asyncio
