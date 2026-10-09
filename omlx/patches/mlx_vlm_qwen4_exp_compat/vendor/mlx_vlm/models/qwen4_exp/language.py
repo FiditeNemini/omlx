@@ -1288,14 +1288,12 @@ _EAGER_DISPATCH_WARMUP = 6
 # Lightning MTP verify rows through the gathered QSA arm (OMLX_QWEN4_QSA_GATHERED_VERIFY=0 disables).
 _GATHERED_VERIFY_DISABLED = not env_enabled("OMLX_QWEN4_QSA_GATHERED_VERIFY")
 # The batched indexer keeps each row's completed-block bank across steps and
-# pools only new blocks (OMLX_QWEN4_QSA_BATCH_ROW_BANKS=0 re-pools every row's
-# whole history each step through a fresh singleton cache; same masks).
-_BATCH_ROW_BANKS_ENABLED = env_enabled("OMLX_QWEN4_QSA_BATCH_ROW_BANKS")
+# pools only new blocks. Tests clear this to compare with fresh per-row caches.
+_BATCH_ROW_BANKS_ENABLED = True
 # Batched decode steps and Lightning MTP verify windows attend only each row's
-# QSA-selected K/V -- one selection, one gather and one SDPA for all rows --
-# instead of a dense SDPA over the padded width behind the sparse mask
-# (OMLX_QWEN4_QSA_GATHERED_BATCH=0 keeps the dense masked path).
-_GATHERED_BATCH_DISABLED = not env_enabled("OMLX_QWEN4_QSA_GATHERED_BATCH")
+# QSA-selected K/V with one gather and one SDPA. Tests set this to compare with
+# the dense masked path.
+_GATHERED_BATCH_DISABLED = False
 # Decode is one query row and a verify window depth + 1; wider batched windows
 # are prefill and keep the dense masked path.
 _GATHERED_BATCH_MAX_QUERY = 16
