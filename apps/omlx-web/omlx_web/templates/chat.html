@@ -1891,7 +1891,7 @@
     </div>
 
     <!-- Right Sidebar Overlay (mobile) -->
-    <div class="right-sidebar-overlay" :class="{ 'hidden': !rightSidebarOpen }" @click="closeRightDrawer()"
+    <div class="right-sidebar-overlay" :class="{ 'hidden': !rightSidebarOpen }" @click="rightSidebarOpen = false"
         x-cloak></div>
 
     <!-- Right Sidebar -->
@@ -1900,7 +1900,7 @@
         :role="drawerOverlay ? 'dialog' : null"
         :aria-modal="drawerOverlay ? 'true' : null"
         :tabindex="drawerOverlay ? -1 : null"
-        :aria-label="window.t('chat.drawer_title')"
+        :aria-label="drawerOverlay ? window.t('chat.drawer_title') : null"
         @keydown.tab="drawerOverlay && trapDialogFocus($event)" x-cloak>
 
         <!-- Sidebar Header with tabs -->
@@ -1932,7 +1932,7 @@
                         <span>{{ t('chat.chat_tab') }}</span>
                     </button>
                 </div>
-                <button @click="closeRightDrawer()"
+                <button @click="rightSidebarOpen = false"
                     class="p-1 hover:bg-surface-alt rounded-lg transition-colors"
                     title="{{ t('chat.close_settings_tooltip') }}"
                     aria-label="{{ t('chat.close_settings_tooltip') }}">
@@ -2495,13 +2495,8 @@
     const SYSTEM_PROMPT_STORAGE_KEY = 'omlx_chat_system_prompt';
     const PROMPT_PROFILES_STORAGE_KEY = 'omlx_chat_prompt_profiles';
 
-    // Where focus goes when the right drawer closes. Kept out of the Alpine
-    // state on purpose: a DOM node does not belong in reactive data.
+    // Opener of the right drawer. A DOM node, so kept out of reactive Alpine state.
     let drawerReturnFocus = null;
-
-    // The right-panel toggle hides itself while the panel is open and comes back
-    // this many ms later, so focus cannot land on it any sooner.
-    const RIGHT_TOGGLE_REVEAL_MS = 260;
 
     function resolveChatUntitledLabel() {
         if (typeof window.t === 'function') {
@@ -2650,10 +2645,7 @@
             // Right Sidebar State
             rightSidebarOpen: window.innerWidth >= 1200,
             showRightToggle: window.innerWidth < 1200,
-            // True once the panel floats over the page (see the max-width: 1024px
-            // block in the <style> above). Only then is it a modal dialog: Esc
-            // closes it and Tab stays inside it, because the page behind it is
-            // still reachable.
+            // Same breakpoint as the max-width: 1024px block that floats the panel.
             drawerOverlay: window.innerWidth <= 1024,
             modelSettingsDirty: false,
             speculativeEngine: 'none',
@@ -3945,7 +3937,9 @@
             } else {
                 this._rightSidebarShowTimer = setTimeout(() => {
                     this.showRightToggle = true;
-                }, RIGHT_TOGGLE_REVEAL_MS);
+                    // x-show reveals the toggle on the next animation frame.
+                    this.$nextTick(() => requestAnimationFrame(() => this.restoreDrawerFocus()));
+                }, 260);
             }
         });
 
@@ -3953,9 +3947,6 @@
             clearTimeout(this._timelineResizeTimer);
             this._timelineResizeTimer = setTimeout(() => {
                 this.computeTimelineDots();
-                // The panel is a modal only while the stylesheet floats it over
-                // the page; crossing the breakpoint changes which half of that
-                // is true, so reevaluate it here too.
                 this.drawerOverlay = window.innerWidth <= 1024;
             }, 200);
         });
@@ -7389,9 +7380,11 @@
         const mod = e.metaKey || e.ctrlKey;
         if (e.key === 'Escape') {
             if (this.showShortcutsHelp) { this.showShortcutsHelp = false; return; }
-            // Esc reaches the drawer before it reaches the stream: a panel that
-            // floats over the page owns the key while it is open.
-            if (this.rightSidebarOpen && this.drawerOverlay) { this.closeRightDrawer(); return; }
+            // Esc already handled inside the panel (profile rename) keeps it open.
+            if (this.rightSidebarOpen && this.drawerOverlay && !e.defaultPrevented) {
+                this.rightSidebarOpen = false;
+                return;
+            }
             if (!this._isTypingTarget(e) && this.isCurrentChatStreaming()) {
                 this.stopStreaming();
             }
@@ -7415,20 +7408,17 @@
         });
     },
 
-    closeRightDrawer() {
-        this.rightSidebarOpen = false;
-        const previous = drawerReturnFocus;
+    restoreDrawerFocus() {
+        const opener = drawerReturnFocus;
         drawerReturnFocus = null;
-        if (previous && typeof previous.focus === 'function') {
-            // The toggle that opened the panel is still hidden here; wait for it
-            // to come back, or the focus() call lands on a display: none button.
-            setTimeout(() => previous.focus(), RIGHT_TOGGLE_REVEAL_MS);
+        const active = document.activeElement;
+        const panel = this.$refs.rightDrawer;
+        if (opener && opener.isConnected
+            && (!active || active === document.body || (panel && panel.contains(active)))) {
+            opener.focus();
         }
     },
 
-    // Keep Tab inside the drawer while it floats over the page: wrap at both
-    // ends, and pull focus back in when it sits on the container itself or has
-    // escaped to the page behind it.
     trapDialogFocus(event) {
         const container = event.currentTarget;
         const controls = Array.from(container.querySelectorAll(
@@ -7440,7 +7430,7 @@
             || (event.shiftKey ? index <= 0 : index === controls.length - 1)) {
             event.preventDefault();
             const target = event.shiftKey ? controls.at(-1) : controls[0];
-            (target || container.querySelector('[autofocus]') || container).focus();
+            (target || container).focus();
         }
     },
 
