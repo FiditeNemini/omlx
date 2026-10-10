@@ -23,7 +23,7 @@ from mlx_lm.models.cache import KVCache
 from omlx.model_settings import ModelSettings
 from omlx.patches import mlx_lm_mtp
 from omlx.patches.mlx_lm_mtp import batch_generator as bg
-from omlx.patches.mlx_lm_mtp import batched_head, cache_rollback
+from omlx.patches.mlx_lm_mtp import batched_head, cache_rollback, fused_batch
 from omlx.patches.mlx_lm_mtp.batch_policy import BatchPolicy
 from omlx.patches.mlx_vlm_mtp import qwen35_verify_linear
 from omlx.utils.model_loading import (
@@ -5877,38 +5877,23 @@ def test_batch_park_expires_while_cohorts_come_and_go():
     assert mtp_cycles > 0.9 * (6000 - first_mtp) - 5 * 6000 / 50
 
 
-def test_chain_depth_stats_cover_drafts_beyond_a_lowered_policy_depth():
-    """A row that drafted 3 tokens alone joins a batch whose policy depth is 1."""
-    from omlx.patches.mlx_lm_mtp import batch_generator as bg
+def test_rows_rebuilt_under_a_lowered_policy_depth_keep_tokens(monkeypatch):
+    """A fallback rebuilds rows that draft deeper than the lowered policy depth."""
+    advance = fused_batch.advance
+    fired = []
 
-    stats = bg._MtpStats()
-    # Before the fix the lists were sized by the policy depth only: index 1 raised.
-    bg._record_chain_depth(stats, max(1, 3), 3, 2)
-    assert stats.depth_drafted == [1, 1, 1]
-    assert stats.depth_accepted == [1, 1, 0]
-    bg._record_chain_depth(stats, 1, 1, 1)
-    assert stats.depth_drafted == [2, 1, 1]
-    assert stats.depth_accepted == [2, 1, 0]
+    def fall_back_once(batch, batch_state):
+        if not fired and batch._omlx_mtp_batch_policy.cur < 2:
+            fired.append(True)
+            raise bg._MtpStepFallback("test")
+        return advance(batch, batch_state)
 
-
-def test_late_join_under_a_lowered_policy_depth_keeps_tokens(monkeypatch):
-    """A late joiner drafts at the model depth alone, then verifies under policy depth 1."""
-    from omlx.patches.mlx_lm_mtp.batch_policy import BatchPolicy
-
-    init = BatchPolicy.__init__
-
-    def shallow(self, *args, **kwargs):
-        init(self, *args, **kwargs)
-        self.cur = 1
-
-    monkeypatch.setattr(BatchPolicy, "__init__", shallow)
-    monkeypatch.setattr(BatchPolicy, "observe_mtp", lambda self, *a, **k: None)
-    monkeypatch.setattr(BatchPolicy, "observe_standard", lambda self, ms: None)
-    monkeypatch.setattr(BatchPolicy, "needs_standard", lambda self: False)
+    monkeypatch.setattr(fused_batch, "advance", fall_back_once)
     model = CountingModel()
-    prompts, limits = [[1, 2], [10, 11, 12]], [24, 16]
+    prompts, limits = [[1, 2], [10, 11, 12]], [60, 60]
     model._omlx_mtp_decode_enabled = False
-    expected, _ = generate(model, prompts, limits, late_join=True)
+    expected, _ = generate(model, prompts, limits)
     model._omlx_mtp_decode_enabled = True
-    actual, _ = generate(model, prompts, limits, late_join=True)
+    actual, _ = generate(model, prompts, limits)
+    assert fired
     assert actual == expected
